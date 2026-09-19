@@ -80,6 +80,7 @@ RandomDrawer/
 │  ├─ AdminPanel.cs           隐藏设置面板（1016）
 │  └─ AssemblyInfo.cs         版本信息
 ├─ tests/PickerTests.cs       算法与配置读写测试（23 项）
+├─ reference/                 原始程序留档（改造前的 exe，作比对参照）
 ├─ dist/                      编译产物（不入库）
 ├─ CHANGELOG.md
 └─ README.md
@@ -89,6 +90,8 @@ RandomDrawer/
 
 桌面上原本只有一个 13,824 字节的 `幸运之子——摇号机.exe`，源码已丢失（疑似随 E 盘事故一并丢失）。
 本工程用 dnfile + dncil 反汇编该 exe 的 IL，**逐条还原**成可编译的 C# 源码，验证后再改造。
+原始二进制已留档在 `reference/幸运之子——摇号机.original.exe`（SHA256 `881DB614…D64B69C`），
+以后要重新比对还原保真度时还用得上。
 
 还原保真度（与原 exe 对比）：
 
