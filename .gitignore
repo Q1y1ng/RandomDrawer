@@ -1,0 +1,16 @@
+# 构建产物
+dist/
+
+# 用户/编辑器临时文件
+*.user
+*.suo
+*.bak
+*.tmp
+.vs/
+.vscode/
+bin/
+obj/
+
+# 本地设置（运行时会生成在 exe 同目录，不入库）
+dist/settings.ini
+settings.ini
