@@ -10,6 +10,7 @@ dist/
 .vscode/
 bin/
 obj/
+tests/bin/
 
 # 本地设置（运行时会生成在 exe 同目录，不入库）
 dist/settings.ini

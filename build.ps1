@@ -18,7 +18,7 @@ if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir | Out
 $sources = @(Get-ChildItem -LiteralPath $srcDir -Filter *.cs | ForEach-Object { $_.FullName })
 Write-Host ("编译 " + $sources.Count + " 个源文件 ...")
 
-& $csc -nologo -utf8output -target:winexe -platform:x86 -optimize+ "-win32icon:$icon" "-out:$outExe" $sources
+& $csc -nologo -utf8output -codepage:65001 -target:winexe -platform:x86 -optimize+ "-win32icon:$icon" "-out:$outExe" $sources
 if ($LASTEXITCODE -ne 0) { throw ("编译失败（退出码 " + $LASTEXITCODE + "）") }
 
 $f = Get-Item -LiteralPath $outExe

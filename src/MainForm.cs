@@ -6,10 +6,17 @@ using System.Windows.Forms;
 namespace RandomDrawer
 {
     /// <summary>
-    /// 主窗口（基线版：界面坐标与行为与原始程序一致）。
+    /// 主窗口：填区间和个数，点"随机抽号"抽号。
+    /// 界面坐标沿用原始程序（已验证与原程序逐像素一致）。
     /// </summary>
     internal sealed class MainForm : Form
     {
+        /// <summary>允许的号码区间上限（防止填出天文数字把界面卡死）。</summary>
+        private const int MaxRange = 100000;
+
+        /// <summary>摇号特效的滚动次数（每 60 ms 一次）。</summary>
+        private const int EffectTicks = 22;
+
         private TextBox _tbStart;
         private TextBox _tbEnd;
         private TextBox _tbCount;
@@ -27,10 +34,12 @@ namespace RandomDrawer
         private string _lastStart = "1";
         private List<int> _finalPick;
         private List<int> _effectPool;
-        private Dictionary<int, double> _effectWeights;
+        private Picker _effectPicker;
         private int _effectTake;
         private int _effectTicks;
         private bool _animating;
+        private HashSet<int> _bottom = new HashSet<int>();
+        private Dictionary<int, double> _weights = new Dictionary<int, double>();
 
         internal MainForm()
         {
@@ -146,6 +155,61 @@ namespace RandomDrawer
             Controls.Add(_tbResult);
             Controls.Add(_lblRoll);
             _lblRoll.BringToFront();
+
+            ApplySettings(Settings.Load());
+        }
+
+        /// <summary>把设置里的界面默认值套到控件上。</summary>
+        private void ApplySettings(Settings settings)
+        {
+            _tbStart.Text = settings.Start.ToString();
+            _tbEnd.Text = settings.End.ToString();
+            _tbCount.Text = settings.Count.ToString();
+            _chkNoRepeat.Checked = settings.NoRepeat;
+            _chkEffect.Checked = settings.Effect;
+            _lastStart = _tbStart.Text.Trim();
+        }
+
+        /// <summary>把界面上的当前值写回设置文件（垫底/权重不动）。</summary>
+        private void SaveUiState()
+        {
+            string startText = _tbStart.Text.Trim();
+            if (startText == Config.MAGIC_CODE)
+            {
+                return; // 输入框里是隐藏入口码，别当成号码存下来
+            }
+            int value;
+            if (!int.TryParse(startText, out value))
+            {
+                return;
+            }
+
+            try
+            {
+                Settings settings = Settings.Load();
+                settings.Start = value;
+                if (int.TryParse(_tbEnd.Text.Trim(), out value))
+                {
+                    settings.End = value;
+                }
+                if (int.TryParse(_tbCount.Text.Trim(), out value) && value >= 1)
+                {
+                    settings.Count = value;
+                }
+                settings.NoRepeat = _chkNoRepeat.Checked;
+                settings.Effect = _chkEffect.Checked;
+                settings.Save();
+            }
+            catch (Exception)
+            {
+                // 存不进去就算了，不影响抽号
+            }
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            SaveUiState();
+            base.OnFormClosing(e);
         }
 
         private void OnDraw(object sender, EventArgs e)
@@ -160,7 +224,7 @@ namespace RandomDrawer
                 {
                     panel.ShowDialog(this);
                 }
-                _tbStart.Text = _lastStart;
+                ApplySettings(Settings.Load());
                 return;
             }
 
@@ -176,18 +240,28 @@ namespace RandomDrawer
                 MessageBox.Show("请输入正确的数字！", "随机抽号器", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+            if ((long)end - (long)start + 1 > MaxRange)
+            {
+                MessageBox.Show(
+                    "号码区间太大了，最多支持 " + MaxRange + " 个号码。",
+                    "随机抽号器",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
 
+            SaveUiState();
             _lastStart = _tbStart.Text.Trim();
-            HashSet<int> blacklist = Config.LoadBlacklist();
-            Dictionary<int, double> weights = Config.LoadWeights();
 
+            Settings settings = Settings.Load();
+            _bottom = Config.ParseNumberSet(settings.BottomText);
+            _weights = Config.ParseWeights(settings.WeightsText);
+
+            // 垫底号码也进池子，只是排到最后才轮得到
             List<int> candidates = new List<int>();
             for (int n = start; n <= end; n++)
             {
-                if (!blacklist.Contains(n))
-                {
-                    candidates.Add(n);
-                }
+                candidates.Add(n);
             }
 
             bool noRepeat = _chkNoRepeat.Checked;
@@ -204,10 +278,11 @@ namespace RandomDrawer
             }
 
             int take = Math.Min(count, pool.Count);
-            List<int> picked = WeightedPick(pool, weights, take);
+            Picker picker = new Picker(_rnd, _bottom, _weights);
+            List<int> picked = picker.Pick(pool, take);
             if (_chkEffect.Checked)
             {
-                StartEffect(picked, candidates, weights, take);
+                StartEffect(picked, pool, take, picker);
             }
             else
             {
@@ -215,62 +290,11 @@ namespace RandomDrawer
             }
         }
 
-        /// <summary>按权重从池子里抽 take 个（抽出即移出池子）。</summary>
-        private List<int> WeightedPick(List<int> candidates, Dictionary<int, double> weights, int take)
-        {
-            List<int> pool = new List<int>(candidates);
-            List<double> current = new List<double>();
-            List<int> result = new List<int>();
-            for (int i = 0; i < take; i++)
-            {
-                current.Clear();
-                double total = 0.0;
-                foreach (int num in pool)
-                {
-                    double weight;
-                    if (!weights.TryGetValue(num, out weight))
-                    {
-                        weight = 1.0;
-                    }
-                    if (weight < 0.0)
-                    {
-                        weight = 0.0;
-                    }
-                    current.Add(weight);
-                    total += weight;
-                }
-
-                int index;
-                if (total <= 0.0)
-                {
-                    index = _rnd.Next(pool.Count);
-                }
-                else
-                {
-                    double r = _rnd.NextDouble() * total;
-                    double acc = 0.0;
-                    index = 0;
-                    while (index < pool.Count - 1)
-                    {
-                        acc += current[index];
-                        if (r < acc)
-                        {
-                            break;
-                        }
-                        index++;
-                    }
-                }
-                result.Add(pool[index]);
-                pool.RemoveAt(index);
-            }
-            return result;
-        }
-
-        private void StartEffect(List<int> finalPick, List<int> pool, Dictionary<int, double> weights, int take)
+        private void StartEffect(List<int> finalPick, List<int> pool, int take, Picker picker)
         {
             _finalPick = finalPick;
             _effectPool = pool;
-            _effectWeights = weights;
+            _effectPicker = picker;
             _effectTake = take;
             _effectTicks = 0;
             _animating = true;
@@ -283,7 +307,9 @@ namespace RandomDrawer
         private void OnEffectTick(object sender, EventArgs e)
         {
             _effectTicks++;
-            List<int> picked = WeightedPick(_effectPool, _effectWeights, _effectTake);
+
+            // 滚动数字也在"还剩的池子"里抽，不会闪出本轮已经抽过的号码
+            List<int> picked = _effectPicker.Pick(_effectPool, _effectTake);
             List<string> parts = new List<string>();
             foreach (int num in picked)
             {
@@ -291,7 +317,7 @@ namespace RandomDrawer
             }
             _lblRoll.Text = string.Join("  ", parts.ToArray());
 
-            if (_effectTicks >= 22)
+            if (_effectTicks >= EffectTicks)
             {
                 _timer.Stop();
                 _lblRoll.Visible = false;
@@ -311,8 +337,8 @@ namespace RandomDrawer
                 if (_chkNoRepeat.Checked)
                 {
                     _drawn.Add(num);
-                    _totalDrawn++;
                 }
+                _totalDrawn++;
             }
             _tbResult.AppendText(string.Join("", parts.ToArray()));
             _lblResult.Text = "抽号结果  已抽取:" + _totalDrawn + "个";
